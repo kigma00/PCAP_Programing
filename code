@@ -49,17 +49,42 @@ struct tcpheader {
     u_short tcp_urp;                 /* urgent pointer */
 };
 
+/* Psuedo TCP header */
+struct pseudo_tcp
+{
+    unsigned saddr, daddr;
+    unsigned char mbz;
+    unsigned char ptcl;
+    unsigned short tcpl;
+    struct tcpheader tcp;
+    char payload[1500];
+};
+
 void got_packet(u_char* args, const struct pcap_pkthdr* header,
     const u_char* packet)
 {
     struct ethheader* eth = (struct ethheader*)packet;
 
+    if (ntohs(eth->ether_type) == 0x0800) { //check IP type
+        struct ipheader* ip = (struct ipheader*)(packet + sizeof(struct ethheader));
+        if (ip->iph_protocol == IPPROTO_TCP) { //check TCP type
+            struct tcphdr* tcp = (struct tcphdr*)(packet + sizeof(struct ethheader) + sizeof(struct ipheader));
 
+            //Eth srcMac print
+            printf("Ethernet src mac: %02x:%02x:%02x:%02x:%02x:%02x\n", eth->ether_shost[0], eth->ether_shost[1], eth->ether_shost[3], eth->ether_shost[4], eth->ether_shost[5]);
+            //Eth dstMac print
+            printf("Ethernet src mac: %02x:%02x:%02x:%02x:%02x:%02x\n", eth->ether_dhost[0], eth->ether_dhost[1], eth->ether_dhost[3], eth->ether_dhost[4], eth->ether_dhost[5]);
 
+            //IP srcIP print
+            printf("IP src ip: %d\n", inet_ntoa(ip->iph_sourceip));
+            //IP dstIP print
+            printf("IP dst ip: %d\n", inet_ntoa(ip->iph_destip));
 
-
-
-
+            //TCP srcPort print
+            printf("TCP srcPort: %d\n", ntohs(tcp->th_sport));
+            //TCP dstPort print
+            printf("TCP dstPort: %d\n", ntohs(tcp->th_dport));
+        }
 }
 
 int main()
