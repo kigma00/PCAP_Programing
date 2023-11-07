@@ -1,113 +1,126 @@
-#include <stdlib.h>
-#include <stdio.h>
 #include <pcap.h>
-#include <arpa/inet.h>
+#include <stdbool.h>
+#include <stdio.h>
 
-/* Ethernet header */
-struct ethheader {
-    u_char  ether_dhost[6];    /* destination host address */
-    u_char  ether_shost[6];    /* source host address */
-    u_short ether_type;                     /* IP? ARP? RARP? etc */
-};
-
-/* IP Header */
-struct ipheader {
-    unsigned char      iph_ihl : 4, //IP header length
-        iph_ver : 4; //IP version
-    unsigned char      iph_tos; //Type of service
-    unsigned short int iph_len; //IP Packet length (data + header)
-    unsigned short int iph_ident; //Identification
-    unsigned short int iph_flag : 3, //Fragmentation flags
-        iph_offset : 13; //Flags offset
-    unsigned char      iph_ttl; //Time to Live
-    unsigned char      iph_protocol; //Protocol type
-    unsigned short int iph_chksum; //IP datagram checksum
-    struct  in_addr    iph_sourceip; //Source IP address
-    struct  in_addr    iph_destip;   //Destination IP address
-};
-
-/* TCP Header */
-struct tcpheader {
-    u_short tcp_sport;               /* source port */
-    u_short tcp_dport;               /* destination port */
-    u_int   tcp_seq;                 /* sequence number */
-    u_int   tcp_ack;                 /* acknowledgement number */
-    u_char  tcp_offx2;               /* data offset, rsvd */
-#define TH_OFF(th)      (((th)->tcp_offx2 & 0xf0) >> 4)
-    u_char  tcp_flags;
-#define TH_FIN  0x01
-#define TH_SYN  0x02
-#define TH_RST  0x04
-#define TH_PUSH 0x08
-#define TH_ACK  0x10
-#define TH_URG  0x20
-#define TH_ECE  0x40
-#define TH_CWR  0x80
-#define TH_FLAGS        (TH_FIN|TH_SYN|TH_RST|TH_ACK|TH_URG|TH_ECE|TH_CWR)
-    u_short tcp_win;                 /* window */
-    u_short tcp_sum;                 /* checksum */
-    u_short tcp_urp;                 /* urgent pointer */
-};
-
-/* Psuedo TCP header */
-struct pseudo_tcp
-{
-    unsigned saddr, daddr;
-    unsigned char mbz;
-    unsigned char ptcl;
-    unsigned short tcpl;
-    struct tcpheader tcp;
-    char payload[1500];
-};
-
-void got_packet(u_char* args, const struct pcap_pkthdr* header,
-    const u_char* packet)
-{
-    struct ethheader* eth = (struct ethheader*)packet;
-
-    if (ntohs(eth->ether_type) == 0x0800) { //check IP type
-        struct ipheader* ip = (struct ipheader*)(packet + sizeof(struct ethheader));
-        if (ip->iph_protocol == IPPROTO_TCP) { //check TCP type
-            struct tcphdr* tcp = (struct tcphdr*)(packet + sizeof(struct ethheader) + sizeof(struct ipheader));
-
-            //Eth srcMac print
-            printf("Ethernet src mac: %02x:%02x:%02x:%02x:%02x:%02x\n", eth->ether_shost[0], eth->ether_shost[1], eth->ether_shost[3], eth->ether_shost[4], eth->ether_shost[5]);
-            //Eth dstMac print
-            printf("Ethernet src mac: %02x:%02x:%02x:%02x:%02x:%02x\n", eth->ether_dhost[0], eth->ether_dhost[1], eth->ether_dhost[3], eth->ether_dhost[4], eth->ether_dhost[5]);
-
-            //IP srcIP print
-            printf("IP src ip: %d\n", inet_ntoa(ip->iph_sourceip));
-            //IP dstIP print
-            printf("IP dst ip: %d\n", inet_ntoa(ip->iph_destip));
-
-            //TCP srcPort print
-            printf("TCP srcPort: %d\n", ntohs(tcp->th_sport));
-            //TCP dstPort print
-            printf("TCP dstPort: %d\n", ntohs(tcp->th_dport));
-        }
+void usage() {
+    printf("syntax: pcap-test <interface>\n");
+    printf("sample: pcap-test wlan0\n");
 }
 
-int main()
-{
-    pcap_t* handle;
+typedef struct {
+    char* dev_;
+} Param;
+
+Param param = {
+    .dev_ = NULL
+};
+
+bool parse(Param* param, int argc, char* argv[]) {
+    if (argc != 2) {
+        usage();
+        return false;
+    }
+    param->dev_ = argv[1];
+    return true;
+}
+
+//ethernet Header
+#pragma pack(push,1)
+struct ethheader{
+    uint8_t ether_dmac[6];
+    uint8_t ether_smac[6];
+    uint16_t ether_type;
+};
+#pragma pack(pop)
+
+//ip Header
+#pragma pack(push,1)
+struct ipheader{
+    uint8_t headerLength : 4, Version : 4 ;
+    uint8_t TypeofService;
+    uint16_t TotalLength;
+    uint16_t Identifier;
+    uint16_t Flags : 3, fragmentOffset : 13;
+    uint8_t TTL;
+    uint8_t ProtocolID;
+    uint16_t HeaderChecksum;
+    uint8_t sip[4];
+    uint8_t dip[4];
+};
+#pragma pack(pop)
+
+//tcp Header
+#pragma pack(push,1)
+struct tcpheader{
+    uint16_t sport;
+    uint16_t dport;
+    uint32_t SequenceNumber;
+    uint32_t AcknowledgementNumber;
+    uint8_t fHLEN:4, tHLEN:4;
+};
+#pragma pack(pop)
+
+int main(int argc, char* argv[]) {
+    if (!parse(&param, argc, argv))
+        return -1;
+
     char errbuf[PCAP_ERRBUF_SIZE];
-    struct bpf_program fp;
-    char filter_exp[] = "icmp";
-    bpf_u_int32 net;
-
-    // Step 1: Open live pcap session on NIC with name enp0s3
-    handle = pcap_open_live("ens33", BUFSIZ, 1, 1000, errbuf);
-
-    // Step 2: Compile filter_exp into BPF psuedo-code
-    pcap_compile(handle, &fp, filter_exp, 0, net);
-    if (pcap_setfilter(handle, &fp) != 0) {
-        pcap_perror(handle, "Error:");
-        exit(EXIT_FAILURE);
+    pcap_t* pcap = pcap_open_live(param.dev_, BUFSIZ, 1, 1000, errbuf);
+    if (pcap == NULL) {
+        fprintf(stderr, "pcap_open_live(%s) return null - %s\n", param.dev_, errbuf);
+        return -1;
     }
 
-    // Step 3: Capture packets
-    pcap_loop(handle, -1, got_packet, NULL);
+    while (true) {
+        struct pcap_pkthdr* header;
+        const u_char* packet;
+        int res = pcap_next_ex(pcap, &header, &packet);
+        if (res == 0) continue;
+        if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
+            printf("pcap_next_ex return %d(%s)\n", res, pcap_geterr(pcap));
+            break;
+        }
 
-    pcap_close(handle);   //Close the handle
+        struct ethheader* rth = packet;
+        struct ipheader* iph = (packet + sizeof(struct ethheader));
+        struct tcpheader* tcph = (packet + sizeof(struct ethheader) + sizeof(struct ipheader));
+
+        if(iph->ProtocolID == IPPROTO_TCP && ntohs(rth->ether_type) == 0x0800)
+        {
+            printf("===================================================================\n\n");
+            printf("<source Info>\n");
+            printf("source mac address : %02x:%02x:%02x:%02x:%02x:%02x\n", rth->ether_smac[0], rth->ether_smac[1], rth->ether_smac[2], rth->ether_smac[3], rth->ether_smac[4], rth->ether_smac[5]);
+            printf("source ip address : %d.%d.%d.%d\n", iph->sip[0], iph->sip[1], iph->sip[2], iph->sip[3]);
+            printf("source port : %d\n", ntohs(tcph->sport));
+            printf("\n");
+
+            printf("<destination Info>\n");
+            printf("destination mac address : %02x:%02x:%02x:%02x:%02x:%02x\n", rth->ether_dmac[0], rth->ether_dmac[1], rth->ether_dmac[2] ,rth->ether_dmac[3] ,rth->ether_dmac[4] ,rth->ether_dmac[5]);
+            printf("destination ip address : %d.%d.%d.%d\n", iph->dip[0], iph->dip[1], iph->dip[2], iph->dip[3]);
+            printf("destination port : %d\n", ntohs(tcph->dport));
+            printf("\n");
+
+            /*Num Test
+            printf("iphl : %d\n", iph->headerLength);
+            printf("ntohs iptotl %d\n", ntohs(iph->TotalLength));
+            printf("iptotl %d\n", iph->TotalLength);
+            printf("tcpHLEN : %d\n", tcph->tHLEN*4);
+            printf("size of Total L :%d\n", sizeof(iph->TotalLength));
+            printf("\n");
+            */
+
+            printf("<data field>\n");
+            int data_length = ntohs(iph->TotalLength) - (iph->headerLength*4) - (tcph->tHLEN*4);
+            if (data_length > 16)
+                data_length = 16;
+            printf("data_length : %d\n", data_length);
+            for(int i=0 ; i < data_length ; i++){
+                printf("%02x ", packet[sizeof(struct ethheader) + (iph->headerLength*4) + (tcph->tHLEN*4) + i]);
+            }
+            printf("\n");
+        }
+    }
+
+    pcap_close(pcap);
     return 0;
 }
